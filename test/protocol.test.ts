@@ -262,9 +262,14 @@ describe('graph pushes', () => {
     await expect(listener.dtp('subscribe', { topics: ['nope'] })).rejects.toMatchObject({ code: 'invalid' })
     const frank = actor()
     await client.publish(await trustEvent(frank, { subject: { type: 'p', value: root.pk } }))
-    const push = await listener.next((f) => f[0] === 'DTP-PUSH')
-    expect(push[1]).toBe('graph')
+    const push = await listener.next(
+      (f) =>
+        f[0] === 'DTP-PUSH' &&
+        f[1] === 'graph' &&
+        ((f[2] as { changed?: { subjects?: string[] } }).changed?.subjects ?? []).includes(`p:${frank.pk}`),
+    )
     const data = push[2] as { graphVersion: number; changed?: { subjects: string[] } }
+    expect(typeof data.graphVersion).toBe('number')
     expect(data.changed?.subjects).toEqual(expect.arrayContaining([`p:${root.pk}`, `p:${frank.pk}`]))
     listener.close()
   })
