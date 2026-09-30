@@ -1,0 +1,39 @@
+{
+  "name": "@dtp/personal-server",
+  "version": "0.1.0",
+  "description": "Local Web-of-Trust server for one person: the DTP resolver protocol over one WebSocket, backed by @dtp/trust-graph",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "dtp-personal": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "lint": "oxlint --deny-warnings",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "start": "node dist/cli.js start"
+  },
+  "dependencies": {
+    "@dtp/telemetry-ui": "file:../TrustGraph/packages/telemetry-ui",
+    "@dtp/trust-graph": "file:../TrustGraph/packages/trust-graph",
+    "@dtp/trust-protocol": "file:../TrustGraph/packages/trust-protocol",
+    "@dtp/trust-query": "file:../TrustGraph/packages/trust-query",
+    "nostr-tools": "^2.24.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@dtp/conformance": "file:../TrustGraph/packages/conformance",
+    "@dtp/resolver-client": "file:../TrustGraph/packages/resolver-client",
+    "@types/node": "^24.13.2",
+    "@types/ws": "^8.18.1",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

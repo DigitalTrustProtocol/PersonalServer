@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: PersonalServer
+      # The @dtp/* packages are linked from a sibling TrustGraph checkout.
+      - uses: actions/checkout@v4
+        with:
+          repository: DigitalTrustProtocol/TrustGraph
+          path: TrustGraph
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build TrustGraph packages
+        working-directory: TrustGraph
+        run: npm ci && npm run build
+      - run: npm ci
+        working-directory: PersonalServer
+      - name: Lint
+        working-directory: PersonalServer
+        run: npm run lint
+      - name: Typecheck
+        working-directory: PersonalServer
+        run: npm run typecheck
+      - name: Test (unit, integration, shared corpus)
+        working-directory: PersonalServer
+        run: npm test
+      - name: Build
+        working-directory: PersonalServer
+        run: npm run build
