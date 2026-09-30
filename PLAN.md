@@ -12,16 +12,17 @@ Legend: ✅ done · 🟡 partial (what is missing is listed) · ⏳ not started 
 
 ## Increments (README § Increments)
 
-### P0 — shared packages 🟡 (TrustGraph; see [TrustGraph/PLAN.md](../TrustGraph/PLAN.md))
+### P0 — shared packages ✅ (TrustGraph; see [TrustGraph/PLAN.md](../TrustGraph/PLAN.md))
 
-- [x] `@dtp/trust-graph` copied verbatim from `AttentionX/src/graph/trust`
-      (only the five external imports and the `EventRecord` type import changed),
-      proven by the extension's own tests running unchanged.
+- [x] `@dtp/trust-graph` copied from `AttentionX/src/graph/trust`, then
+      diverged under decision D3 to fix the model gaps (TrustGraph TG-9;
+      each diverged file listed in `packages/trust-graph/DIVERGENCE.json`).
 - [x] `@dtp/trust-protocol`, `@dtp/trust-query` (lookups, frontier, NIP-09
       floors, result shaping), `@dtp/conformance` + corpus, `@dtp/telemetry-ui`,
       `@dtp/resolver-client`.
-- [ ] ⛔ D3: walk budgets (G10), level structure for `graph.field` (G12),
-      binding inside the walk (G8). Not implemented anywhere; no workaround.
+- [x] D3 (package only): walk budgets (G10), level structure for
+      `graph.field` (G12), binding inside the walk, lenient / strict (G8),
+      and G1 G2 G3 G4 G6 G7. Open in the walk: G5 (listed in `dtp.gaps`).
 
 ### P1 — server core ✅
 
@@ -51,7 +52,7 @@ Legend: ✅ done · 🟡 partial (what is missing is listed) · ⏳ not started 
       `lookup.incoming` / `outgoing` / `counts` / `batch`,
       `graph.neighborhood`, `graph.frontier`, `identity.claims`,
       `subscribe` / `unsubscribe` (`graph` pushes, ≤ 4/s, changed subjects),
-      `graph.field` → `unsupported` (G12).
+      `graph.field` (`{ graphVersion, completeDepth, levels, binds }`).
 - [x] Guardrails that do not need the walk: batch / key / lookup-batch caps
       (`invalid`), page and statement / path / neighborhood clamps with
       truncation reasons, `maxLookupRecords`, `maxInFlight` (`busy`),
@@ -63,7 +64,9 @@ Legend: ✅ done · 🟡 partial (what is missing is listed) · ⏳ not started 
       batch items (batches yield every ~5 ms).
 - [x] NIP-11 on `GET /` (`Accept: application/nostr+json`) with `self`,
       `limitation`, and `dtp { api, model, corpus, instanceId, scopeProfile,
-      capabilities, unsupported, gaps, limits }`; `/healthz`, `/readyz`.
+      capabilities, unsupported?, gaps?, limits }` (`unsupported` is omitted
+      when every operation is implemented; `gaps` lists G5); `/healthz`,
+      `/readyz`.
 - [x] Access: `Host` allow-list (DNS rebinding) on HTTP and upgrade, `Origin`
       allow-list at upgrade, `listen = lan` refuses non-private peers,
       keepalive pings 20 s / 60 s, idle read-only close after 5 min.
@@ -120,7 +123,9 @@ export. The shared corpus runs against the bundled packages.
 - [x] Test: an in-process relay; the server syncs the root's frontier,
       fetches claims, answers queries, pushes `coverage`, and follows a live
       event.
-- [ ] `claims-pending` coverage (only meaningful once strict binding exists, G8).
+- [ ] `claims-pending` coverage: strict binding exists now, but the server
+      does not yet track which witnessed candidates still wait for their
+      `10011` fetch, so it never reports the reason.
 - [ ] `global-continuous` does not include `10011` yet (ported
       `GLOBAL_SYNC_KINDS` is 32009 / 32014; specs/sync.md notes it).
 - [ ] Prune out-of-WoT authors when the heap is at its cap (today growth
@@ -139,16 +144,25 @@ export. The shared corpus runs against the bundled packages.
       `listbannedpubkeys`, `assignrole`, `unassignrole`) for `auth.admins`
       or `admin` members.
 - [x] Lookups, neighborhood (see P1).
-- [ ] ⛔ D3 / G12: `graph.field`.
-- [ ] ⛔ D3 / G10: in-walk guardrails (`completeDepth`, `timeBudget` /
-      `nodeBudget` / `edgeBudget` inside a walk, `maxReachedNodes`,
-      `maxWalkRecords`, `maxColdWalks` queueing). Reported in `dtp.limits`
-      but not enforceable: a synchronous walk cannot be interrupted.
-- [ ] ⛔ D3 / G8: identity binding (lenient / strict) — the server has no
-      binds at all; `user:id` results carry `coverage: partial`
-      `binding-unsupported`.
-- [x] Session suite v1 (`TrustGraph/corpus/sessions/basic-open.json`, 29
-      steps) runs against a fresh server on every `npm test`.
+- [x] `graph.field` (G12): `{ rootPubkey?, hopContext?, threshold?,
+      maxDepth?, bindingMode? }` with session defaults → `{ graphVersion,
+      completeDepth, levels, binds }`, under the same walk budgets.
+- [x] In-walk guardrails (G10): every trust / rating walk and `graph.field`
+      gets `maxReachedNodes`, `maxWalkRecords`, and a deadline (the
+      operation deadline, the batch deadline for batch items, or the
+      request's `deadlineMs`, whichever is first); a budget stop answers
+      `truncated`, `truncatedReasons` (`nodeBudget` / `edgeBudget` /
+      `timeBudget`), and `completeDepth`, and counts as a guardrail hit.
+- [ ] `maxColdWalks` queueing: reported in `dtp.limits`, not used (every
+      walk is warm on this server, PS-D11).
+- [x] Identity binding (G8): lenient by default (D5), `strict` per query or
+      session. Claims (`10011` winners) live on the Graph, where the walk
+      reads them; witnesses come from synced `32009` hints. `user:id`
+      results carry `binding` provenance; `binding-unsupported` is gone.
+- [x] Session suite (`TrustGraph/corpus/sessions`: `basic-open` 29 steps,
+      `ops-open` 27, `walk-budgets` 5 with `limits.maxReachedNodes`) runs
+      against a fresh server on every `npm test`; the test fails if any step
+      is skipped or falls back to its `otherwise` frames.
 - [ ] More sessions (auth flows, pushes, guardrail responses) and the
       side-by-side run with the Global Server.
 - [ ] `maxWriterConnections` per pubkey, `rateLimit` settings, `admin.auth =
@@ -164,10 +178,10 @@ export. The shared corpus runs against the bundled packages.
 | PS-D2 | `node:sqlite` | No native addon to build on Windows; synchronous API fits "compare + write in one tick" |
 | PS-D3 | Plain `node:http` + `ws` (`noServer`) | Four routes; no framework needed; one port for HTTP and the socket |
 | PS-D4 | Heap records carry graph columns and `content` only (no tags / sig) | Minimal memory; `REQ` reads full events from SQLite |
-| PS-D5 | Claims live on the Graph instance (WeakMap, like the extension's chrome maps) | `identity.claims` answers from memory; no SQLite on the query path |
+| PS-D5 | Claims live on the Graph (`Graph.setIdentityClaims`), the same map the walk reads for strict binds | `identity.claims` answers from memory; no SQLite on the query path; one copy of the claims |
 | PS-D6 | Default `allowedOrigins = chrome-extension://*` | Unpacked extension ids differ per install; websites stay refused; `init --allow-origin` pins it (specs updated) |
 | PS-D7 | Default score context: `identity` for trust, `""` for ratings | Product profile `attention` (wot-model §9); a scrolling client sends only subjects. Added to resolver-api.md |
-| PS-D8 | `user:id` results report `coverage: partial` + `binding-unsupported` | Honest signal that G8 is missing on servers (added to resolver-api.md as interim) |
+| PS-D8 | (Retired after G8.) `user:id` results used to report `coverage: partial` + `binding-unsupported` | They now carry `binding` provenance and complete coverage |
 | PS-D9 | `graph` push `changed.subjects` = changed statement's subject + author, and `i:user:id:<n>` for claims | Resolver-api left it open; documented there |
 | PS-D10 | Heap edge cap refuses **new** slots with `rate-limited:`; replacements still apply | Without sync there is no frontier to shrink; refusing growth is the only safe action |
 | PS-D11 | All latency is reported as `warm` | The heap is always resident; there are no cold walks on this server |
@@ -177,7 +191,6 @@ export. The shared corpus runs against the bundled packages.
 
 | Spec | Deviation |
 | --- | --- |
-| resolver-api.md § Connection | `capabilities` omits `graph.field`; `dtp.unsupported` and `dtp.gaps` are added (interim until D3) |
 | operations.md / security.md | `allowedOrigins` default (PS-D6) |
 | telemetry.md | SSE sends full snapshots, not deltas |
 | sync.md | `global-continuous` subscribes 32009 / 32014 only (no 10011 yet) |
@@ -186,6 +199,4 @@ export. The shared corpus runs against the bundled packages.
 
 | ID | Blocks |
 | --- | --- |
-| **D3** | G10 (walk budgets: `completeDepth`, time / node / record budgets inside a walk) and G12 (`graph.field`) — required before this server offers the full shared API and before the session suite can pass on both servers. Also G8 (binding inside the walk): until then the server answers `user:id` subjects without binds. |
-| D5 | Default binding mode (the server accepts `lenient` / `strict` but cannot act on it before G8) |
 | D1 / D2 | Library home and npm scope (`@dtp/*` is a working name; packages are linked with `file:`) |

@@ -114,21 +114,19 @@ wrappers over the heap and never touch the locked walk:
 
 At Personal Server sizes (≤ 2 M edges) a per-request sort is cheap. Lookups are
 bounded by the page size, keys per request, scanned records, and the
-per-operation deadline — the walk-budget gap (G10) does not affect them.
+per-operation deadline; they are not walks, so the walk budgets do not apply.
 
 ## Resolver operations that need library support
 
-Every operation of the shared API must exist here. Two of them need the walk
-to expose more than `Score[]`, which is a change inside the locked
-`@dtp/trust-graph`:
+Every operation of the shared API must exist here. Three needed the walk to
+expose more than `Score[]`; decision D3 allowed those changes inside
+`@dtp/trust-graph`, and the server uses them:
 
-| Operation | Needs | Gap |
-| --- | --- | --- |
-| `graph.field` | The walk's level structure (qualifying nodes per level) and the binds it decided | G12 |
-| Guardrail responses (`completeDepth`, `timeBudget`, …) | Budgets inside the walk | G10 |
-
-Until those land, the Personal Server cannot claim the API and does not ship
-(both are in PersonalServer increment P0).
+| Operation | Needs | Gap (fixed) | Where |
+| --- | --- | --- | --- |
+| `graph.field` | The walk's level structure (qualifying nodes per level) and the binds it decided | G12 | `IndexResolver.field` → `executeFieldQuery` |
+| Guardrail responses (`completeDepth`, `timeBudget`, …) | Budgets inside the walk | G10 | `WalkBudgets` from `maxReachedNodes`, `maxWalkRecords`, and the operation deadline |
+| `user:id` subjects with `bindingMode` | Binds decided per walk, lenient or strict | G8 | Claims on the Graph (`setIdentityClaims`), witnesses from synced `32009` hints |
 
 ## Guardrails
 

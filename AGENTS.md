@@ -32,8 +32,8 @@ answers the shared resolver protocol over one WebSocket. Read
 - One API with the Global Server: every message, op, default, error code, and
   result field follows [TrustGraph resolver-api.md](../TrustGraph/specs/resolver-api.md).
   Anything not built answers `DTP-ERR … unsupported` and is listed in PLAN.md
-  (today: `graph.field`, gap G12; in-walk budgets G10 and binding G8 are
-  blocked on decision D3).
+  (today: a `hopContext` other than `identity`). Every DTP operation is
+  implemented; the walk's one open model gap (G5) is listed in `dtp.gaps`.
 - No Nostr user secret keys, no X identity / post data, no kind 0.
 - Writes: validate → scope profile → slot reduction → one SQLite transaction →
   heap apply in the same tick → `graphVersion`. Reads never touch SQLite
