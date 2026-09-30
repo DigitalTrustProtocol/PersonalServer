@@ -4,12 +4,14 @@
  * heap apply in the same tick → graphVersion. Used by `EVENT`, the CLI
  * import, and (later) relay sync. Answers carry NIP-01 `OK` prefixes.
  *
- * Signature verification runs inline on the main thread; the worker pool of
- * architecture.md is not built yet (PLAN.md).
+ * Signatures are checked in the worker pool when one is given (the server),
+ * inline otherwise (offline CLI import).
  */
 
+import { validateEvent, type Event } from 'nostr-tools'
 import { classifyEvent, type EventRecord, type IdentityClaim, type ParsedDeletion } from '@dtp/trust-protocol'
 import type { GraphManager } from '../graph/graph-manager.js'
+import type { VerifyPool } from './verify-pool.js'
 import type { EventSource, Repository } from '../storage/repository.js'
 import type { IngestResult, Telemetry } from '../telemetry/telemetry.js'
 
@@ -24,7 +26,11 @@ export interface IngestOutcome {
 export interface IngestOptions {
   maxHeapEdges: number
   now?: () => number
+  /** Off-thread signature checks; without it verification runs inline. */
+  verifier?: VerifyPool
 }
+
+const VERIFIED_KINDS = new Set([32009, 32014, 10011, 5])
 
 function eventIdOf(input: unknown): string {
   const id = (input as { id?: unknown } | null)?.id
@@ -61,7 +67,15 @@ export class IngestPipeline {
   async ingest(input: unknown, source: EventSource): Promise<IngestOutcome> {
     const eventId = eventIdOf(input)
     const rawKind = Number((input as { kind?: unknown } | null)?.kind)
-    const classified = await classifyEvent(input, { now: this.#now() })
+    let verifyInline = true
+    const verifier = this.#options.verifier
+    if (verifier && VERIFIED_KINDS.has(rawKind) && validateEvent(input) && typeof (input as Event).sig === 'string') {
+      if (!(await verifier.verify(input as Event))) {
+        return this.#done(rawKind, eventId, false, 'invalid', 'invalid: event id or signature does not verify')
+      }
+      verifyInline = false
+    }
+    const classified = await classifyEvent(input, { now: this.#now(), verifyEvent: verifyInline })
     switch (classified.type) {
       case 'rejected':
         return this.#done(

@@ -78,9 +78,10 @@ Legend: ✅ done · 🟡 partial (what is missing is listed) · ⏳ not started 
       `sync`, `auth`, `members`, `query trust|rating`.
 - [x] Logging: console + rotating files (10 × 10 MB); warn / error feed the
       Logs page; no subjects or bodies at info.
-- [ ] Signature-verification worker pool (architecture.md § Process model):
-      verification runs inline on the main thread today. Correct, slower
-      under bursts.
+- [x] Signature-verification worker pool (architecture.md § Process model):
+      `worker_threads`, `min(4, max(1, cores − 1))` workers by default
+      (`verifyWorkers` setting), started on first use; the offline CLI import
+      verifies inline.
 - [ ] Ingest applied in ≤ 5 ms slices during sync bursts: relay events are
       applied one by one as they arrive (each awaits its signature check),
       which yields between events but has no explicit slice budget.
@@ -146,8 +147,10 @@ export. The shared corpus runs against the bundled packages.
 - [ ] ⛔ D3 / G8: identity binding (lenient / strict) — the server has no
       binds at all; `user:id` results carry `coverage: partial`
       `binding-unsupported`.
-- [ ] Session suite (`corpus/sessions/*.json`) run against this server and
-      the Global Server — needs both servers and the suite files.
+- [x] Session suite v1 (`TrustGraph/corpus/sessions/basic-open.json`, 29
+      steps) runs against a fresh server on every `npm test`.
+- [ ] More sessions (auth flows, pushes, guardrail responses) and the
+      side-by-side run with the Global Server.
 - [ ] `maxWriterConnections` per pubkey, `rateLimit` settings, `admin.auth =
       nip98` for a non-loopback admin listener.
 
@@ -175,7 +178,6 @@ export. The shared corpus runs against the bundled packages.
 | Spec | Deviation |
 | --- | --- |
 | resolver-api.md § Connection | `capabilities` omits `graph.field`; `dtp.unsupported` and `dtp.gaps` are added (interim until D3) |
-| architecture.md § Process model | No signature worker pool yet (inline verification) |
 | operations.md / security.md | `allowedOrigins` default (PS-D6) |
 | telemetry.md | SSE sends full snapshots, not deltas |
 | sync.md | `global-continuous` subscribes 32009 / 32014 only (no 10011 yet) |

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_GUARDRAILS, defaultDataDir, localHostNames, originAllowed, parseBootstrap } from '../src/config.js'
+import { finalizeEvent, generateSecretKey } from 'nostr-tools'
 import { GraphManager } from '../src/graph/graph-manager.js'
+import { VerifyPool } from '../src/ingest/verify-pool.js'
 import { OpError } from '../src/protocol/errors.js'
 import { runOperation, type OpContext } from '../src/protocol/ops.js'
 import { parseDefaults, resolveQuery } from '../src/protocol/session.js'
@@ -80,6 +82,22 @@ describe('operations', () => {
     const c = ctx()
     await runOperation(c, 'subscribe', { topics: ['graph', 'coverage'] })
     expect(await runOperation(c, 'unsubscribe', { topics: ['coverage'] })).toEqual({ topics: ['graph'] })
+  })
+})
+
+describe('signature worker pool', () => {
+  it('verifies in worker threads and rejects forgeries', async () => {
+    const pool = new VerifyPool(2)
+    const sk = generateSecretKey()
+    const event = finalizeEvent({ kind: 32009, created_at: 1, tags: [], content: '' }, sk)
+    const results = await Promise.all([
+      pool.verify(event),
+      pool.verify({ ...event, sig: 'ab'.repeat(64) }),
+      pool.verify({ ...event, content: 'tampered' }),
+    ])
+    expect(results).toEqual([true, false, false])
+    await pool.close()
+    await expect(pool.verify(event)).rejects.toThrow(/closed/)
   })
 })
 

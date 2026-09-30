@@ -28,6 +28,7 @@ import {
 import { GraphManager } from './graph/graph-manager.js'
 import { handleNip86 } from './http/nip86.js'
 import { IngestPipeline } from './ingest/pipeline.js'
+import { VerifyPool } from './ingest/verify-pool.js'
 import { loadOrCreateServerKey, type ServerKey } from './keys.js'
 import { ServerLogger, type Logger } from './log.js'
 import { Membership } from './membership.js'
@@ -98,6 +99,7 @@ export class PersonalServer {
   readonly guardrails: Guardrails
   readonly memory: MemoryGuardrails
   readonly sync: SyncService
+  readonly verifier: VerifyPool
   readonly #runSync: boolean
   readonly #http: Server
   readonly #wss: WebSocketServer
@@ -136,7 +138,13 @@ export class PersonalServer {
     }
     this.memory = { ...DEFAULT_MEMORY_GUARDRAILS, ...this.repo.setting<Partial<MemoryGuardrails>>('memory', {}) }
     this.membership = new Membership(this.repo, this.key)
-    this.ingest = new IngestPipeline(this.repo, this.graph, this.telemetry, { maxHeapEdges: this.memory.maxHeapEdges })
+    this.verifier = new VerifyPool(
+      this.repo.setting<number>('verifyWorkers', Math.min(4, Math.max(1, cpus().length - 1))),
+    )
+    this.ingest = new IngestPipeline(this.repo, this.graph, this.telemetry, {
+      maxHeapEdges: this.memory.maxHeapEdges,
+      verifier: this.verifier,
+    })
     this.#push = new PushHub(() => this.#connections)
     this.graph.onChange((change) => this.#push.onChange(change))
     this.#runSync = options.sync !== false
@@ -254,6 +262,7 @@ export class PersonalServer {
     await new Promise<void>((resolve) => this.#http.close(() => resolve()))
     this.#http.closeAllConnections()
     await this.#admin.close()
+    await this.verifier.close()
     this.repo.db.close()
   }
 
