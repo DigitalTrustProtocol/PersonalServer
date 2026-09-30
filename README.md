@@ -71,6 +71,9 @@ Each increment is shipped and tested before the next one is planned.
 
 | ID | Decision |
 | --- | --- |
-| PS-D1 | Default port (3870 proposed) |
-| PS-D2 | `node:sqlite` vs `better-sqlite3` |
-| PS-D3 | HTTP handler for NIP-11 / NIP-86 / health: Fastify vs plain `node:http` (WebSocket via `ws` either way) |
+| PS-D1 | Default port (3870 proposed) — **working choice 3870** (admin 3871) |
+| PS-D2 | `node:sqlite` vs `better-sqlite3` — **taken: `node:sqlite`** (no native addon on Windows) |
+| PS-D3 | HTTP handler for NIP-11 / NIP-86 / health: Fastify vs plain `node:http` (WebSocket via `ws` either way) — **taken: plain `node:http`** |
+| PS-D6 | Default `allowedOrigins` — **working choice `chrome-extension://*`** until the Attention extension id is fixed |
+
+Implementation status and remaining work: [PLAN.md](PLAN.md).

@@ -36,7 +36,7 @@ server listens on a shared LAN.
 
 | Threat | Guard |
 | --- | --- |
-| A website in the user's browser opens a WebSocket to `127.0.0.1:<port>` (WebSockets are not covered by CORS) | Web `Origin`s must be allowlisted at upgrade: `chrome-extension://<Attention id>` and configured app origins. Clients that send no `Origin` (native apps, CLI) are allowed. |
+| A website in the user's browser opens a WebSocket to `127.0.0.1:<port>` (WebSockets are not covered by CORS) | Web `Origin`s must be allowlisted at upgrade: by default any `chrome-extension://` origin (PS-D6; pin `chrome-extension://<Attention id>` with `init --allow-origin`) and configured app origins. Clients that send no `Origin` (native apps, CLI) are allowed. |
 | DNS rebinding (`evil.example` resolving to 127.0.0.1) | Reject upgrades and HTTP requests whose `Host` is not the configured local name or address |
 | A client sends forged or malformed events | Full validation of every event, whoever sends it |
 | A local client removes someone else's event | NIP-09 deletions apply only when signed by the event's own author (the shared rule) |

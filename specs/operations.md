@@ -48,7 +48,7 @@ the `settings` table and changed with the CLI or NIP-86.
 | Port | **3870** (decision PS-D1); `init` picks the next free port if taken |
 | `listen` | `local` (loopback); `lan` for private interfaces only |
 | `auth.reads`, `auth.writes` | `open`, `open` |
-| `allowedOrigins` | `chrome-extension://<Attention id>` |
+| `allowedOrigins` | `chrome-extension://*` (any extension origin; unpacked Attention ids differ per install — decision PS-D6). `init --allow-origin chrome-extension://<Attention id>` pins it. Websites (`http(s)://` origins) are refused unless listed |
 | `admin.listen`, `admin.auth` | `127.0.0.1:3871`, `local` (telemetry pages; [TrustGraph telemetry.md](../../TrustGraph/specs/telemetry.md)) |
 | Guardrails | The shared defaults of [resolver-api.md § Guardrails](../../TrustGraph/specs/resolver-api.md#guardrails); memory limits in [architecture.md § Guardrails](architecture.md#guardrails) |
 
