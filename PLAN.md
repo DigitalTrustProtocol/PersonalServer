@@ -75,15 +75,15 @@ Legend: ✅ done · 🟡 partial (what is missing is listed) · ⏳ not started 
 - [x] CLI `dtp-personal`: `init`, `start`, `status [--json]`, `dashboard`,
       `import` (JSON Lines / array / `{events}`; via the running server or
       offline through the same pipeline), `export`, `roots`, `relays`,
-      `auth`, `members`, `query trust|rating`; `sync` answers "not
-      implemented (P2)" with exit code 2.
+      `sync`, `auth`, `members`, `query trust|rating`.
 - [x] Logging: console + rotating files (10 × 10 MB); warn / error feed the
       Logs page; no subjects or bodies at info.
 - [ ] Signature-verification worker pool (architecture.md § Process model):
       verification runs inline on the main thread today. Correct, slower
       under bursts.
-- [ ] Ingest applied in ≤ 5 ms slices during sync bursts (only matters with
-      P2 relay sync).
+- [ ] Ingest applied in ≤ 5 ms slices during sync bursts: relay events are
+      applied one by one as they arrive (each awaits its signature check),
+      which yields between events but has no explicit slice budget.
 
 Acceptance (all automated, `npm test`): integration tests start the server
 on random ports with a temp data dir, sign events with nostr-tools, push
@@ -93,17 +93,38 @@ across a restart), `REQ` by ids / authors / NIP-43, NIP-11, Host / Origin
 refusals, telemetry schema and `/metrics` names, `busy`, CLI import /
 export. The shared corpus runs against the bundled packages.
 
-### P2 — relay sync ⏳ (in progress this session: `@dtp/relay-sync` port)
+### P2 — relay sync 🟡
 
-- [ ] `@dtp/relay-sync`: port of `AttentionX/src/relay/{synchronizer,filters,live-supervisor,retry,types,graph}.ts`.
-- [ ] SQLite-backed ports (cursors, relay observations, event repository
-      through the ingest pipeline), frontier reader over `graph.frontier`,
-      relay client on Node's global `WebSocket`.
-- [ ] Strategies: continuous frontier (default), interval, subscribe-all;
-      24 h full refresh; PS bounds (depth 3, 500 / level, 5 000 total …).
-- [ ] `10011` for frontier authors and hinted npubs; `coverage: partial`
-      `root-warming` / `claims-pending` and the `coverage` push.
-- [ ] Telemetry Sources page rows, `dtp_source_state`; `dtp-personal sync`.
+- [x] `@dtp/relay-sync`: port of `AttentionX/src/relay/{synchronizer,filters,live-supervisor,retry,types,graph}.ts`
+      (import rewrites only; the extension's relay tests pass unchanged).
+- [x] Ports on this server: `SqliteCursorRepository` (`sync_cursors`),
+      `PipelineEventRepository` (the same ingest pipeline as `EVENT`, source
+      `relay`), `HeapFrontierReader` (trust-query frontier over the heap),
+      provenance into `relay_observations` (pruned with the winner),
+      `RelayPool` on Node's global `WebSocket` (query + live subscribe).
+- [x] Strategies: `frontier-continuous` (default: pass, then live frontier
+      subscriptions; a new pass when the frontier or the relay list changes,
+      every 15 min, on `sync refresh`; the synchronizer's own 24 h full
+      refresh), `frontier-interval` (pass every N minutes),
+      `global-continuous` (live 32009 / 32014 of everyone). PS bounds:
+      depth 3, 500 / level, 5 000 total, 200 000 / 200 000 / 20 000 events.
+- [x] `10011` for frontier authors and for npubs their statements hint
+      (20 authors per REQ, after each pass).
+- [x] Roots: configured + active session roots; `coverage: partial`
+      `root-warming` until the root's first complete pass, then a
+      `coverage` push; heap edge cap pauses frontier growth.
+- [x] Telemetry Sources (relay rows, frontier size and truncation),
+      `dtp_source_state{type="relay"}`, `source-down` alert; CLI
+      `sync start|stop|refresh|strategy`, `relays add|remove|list`.
+- [x] Test: an in-process relay; the server syncs the root's frontier,
+      fetches claims, answers queries, pushes `coverage`, and follows a live
+      event.
+- [ ] `claims-pending` coverage (only meaningful once strict binding exists, G8).
+- [ ] `global-continuous` does not include `10011` yet (ported
+      `GLOBAL_SYNC_KINDS` is 32009 / 32014; specs/sync.md notes it).
+- [ ] Prune out-of-WoT authors when the heap is at its cap (today growth
+      stops; nothing is evicted).
+- [ ] Global Server as a sync helper (`graph.frontier` bootstrap, `REQ ids`) — later, opt-in.
 
 ### P3 — full shared API 🟡
 
@@ -157,6 +178,7 @@ export. The shared corpus runs against the bundled packages.
 | architecture.md § Process model | No signature worker pool yet (inline verification) |
 | operations.md / security.md | `allowedOrigins` default (PS-D6) |
 | telemetry.md | SSE sends full snapshots, not deltas |
+| sync.md | `global-continuous` subscribes 32009 / 32014 only (no 10011 yet) |
 
 ## Blockers (owner decisions)
 

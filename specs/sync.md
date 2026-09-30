@@ -22,7 +22,7 @@ Same three strategies as the extension's Data Synchronization settings:
 | --- | --- | --- |
 | Interval frontier (`frontier-interval`) | Yes | Available; wake interval 5 / 15 / 30 / 60 min |
 | Continuous frontier (`frontier-continuous`) | No (needs keep-warm alarm) | **Default** — the process does not sleep |
-| Subscribe all (`global-continuous`) | No | Available; author-unfiltered live `32009` / `32014` / `10011` from now + overlap |
+| Subscribe all (`global-continuous`) | No | Available; author-unfiltered live `32009` / `32014` / `10011` from now + overlap. *Today:* the ported supervisor subscribes `32009` / `32014` only (`GLOBAL_SYNC_KINDS`); `10011` in this mode is still to do (PLAN.md) |
 
 Every strategy also runs a full frontier refresh once per 24 h (extension
 `FULL_REFRESH_INTERVAL_MS`). Relays come from the server's settings

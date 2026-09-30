@@ -293,6 +293,33 @@ export class Repository {
     return Object.fromEntries(rows.map((row) => [String(row.kind), Number(row.n)]))
   }
 
+  /** Npubs hinted by these authors' statements (candidates whose 10011 strict mode needs). */
+  hintedPubkeys(authors: readonly string[]): string[] {
+    const out = new Set<string>()
+    for (let i = 0; i < authors.length; i += 500) {
+      const chunk = authors.slice(i, i + 500)
+      const rows = this.#db
+        .prepare(
+          `SELECT DISTINCT hint_pubkey FROM events WHERE hint_pubkey IS NOT NULL AND pubkey IN (${chunk.map(() => '?').join(',')})`,
+        )
+        .all(...chunk) as Array<{ hint_pubkey: string }>
+      for (const row of rows) out.add(row.hint_pubkey)
+    }
+    return [...out]
+  }
+
+  /** Relay provenance for a stored winner (pruned with the winner). */
+  observe(eventId: string, relayUrl: string, at: number): void {
+    const stored = this.#db.prepare('SELECT 1 FROM events WHERE id = ?').get(eventId)
+    if (!stored) return
+    this.#db
+      .prepare(
+        `INSERT INTO relay_observations (event_id, relay_url, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(event_id, relay_url) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+      )
+      .run(eventId, relayUrl, at, at)
+  }
+
   // ---- slot floors -----------------------------------------------------
 
   floors(): Array<[string, number]> {

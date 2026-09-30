@@ -20,6 +20,7 @@
     "start": "node dist/cli.js start"
   },
   "dependencies": {
+    "@dtp/relay-sync": "file:../TrustGraph/packages/relay-sync",
     "@dtp/telemetry-ui": "file:../TrustGraph/packages/telemetry-ui",
     "@dtp/trust-graph": "file:../TrustGraph/packages/trust-graph",
     "@dtp/trust-protocol": "file:../TrustGraph/packages/trust-protocol",

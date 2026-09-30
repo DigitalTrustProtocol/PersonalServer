@@ -60,6 +60,8 @@ export interface OpContext {
   info(): Record<string, unknown>
   /** A root set by session.update becomes an active root. */
   onActiveRoot(pubkey: string): void
+  /** Server-side coverage reasons for a root (`root-warming`). */
+  coverageReasons(root: string): string[]
   /** Absolute deadline (ms since epoch) for this operation. */
   deadlineAt: number
   isCancelled(): boolean
@@ -77,11 +79,14 @@ function lookupLimits(g: Guardrails): LookupLimits {
   return { maxKeys: g.maxLookupKeys, maxPage: g.maxLookupPage, maxRecords: g.maxLookupRecords }
 }
 
-/** `binding-unsupported`: servers cannot bind X accounts until gap G8 lands (D3). */
-function coverageFor<T extends WireTrustResult | WireRatingResult>(result: T, subjectValue: string): T {
-  if (subjectValue.startsWith('user:id:')) {
-    return { ...result, coverage: 'partial', coverageReasons: ['binding-unsupported'] }
-  }
+/**
+ * `root-warming` while the root's first sync runs; `binding-unsupported`
+ * for X accounts, which servers cannot bind until gap G8 lands (D3).
+ */
+function coverageFor<T extends WireTrustResult | WireRatingResult>(ctx: OpContext, result: T, resolved: ResolvedQuery): T {
+  const reasons = [...ctx.coverageReasons(resolved.query.rootPubkey)]
+  if (resolved.query.subject.value.startsWith('user:id:')) reasons.push('binding-unsupported')
+  if (reasons.length > 0) return { ...result, coverage: 'partial', coverageReasons: reasons }
   return { ...result, coverage: 'complete' }
 }
 
@@ -92,7 +97,7 @@ function runTrust(ctx: OpContext, resolved: ResolvedQuery): WireTrustResult {
     maxPathNodes: ctx.guardrails.maxPathNodes,
   })
   for (const reason of limited.truncatedReasons ?? []) ctx.guardrail(reason)
-  return coverageFor(limited, resolved.query.subject.value)
+  return coverageFor(ctx, limited, resolved)
 }
 
 function runRating(ctx: OpContext, resolved: ResolvedQuery): WireRatingResult {
@@ -102,7 +107,7 @@ function runRating(ctx: OpContext, resolved: ResolvedQuery): WireRatingResult {
     maxPathNodes: ctx.guardrails.maxPathNodes,
   })
   for (const reason of limited.truncatedReasons ?? []) ctx.guardrail(reason)
-  return coverageFor(limited, resolved.query.subject.value)
+  return coverageFor(ctx, limited, resolved)
 }
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve))

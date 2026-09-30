@@ -50,7 +50,9 @@ describe('dtp-personal', () => {
     const members = io()
     await runCli(['members', 'list', '--data-dir', dir], members.io)
     expect(members.out).toEqual([`${root.pk} admin`])
-    expect(await runCli(['sync', 'start', '--data-dir', dir], t.io)).toBe(2)
+    expect(await runCli(['sync', 'stop', '--data-dir', dir], t.io)).toBe(0)
+    expect(await runCli(['sync', 'strategy', 'frontier-interval', '30', '--data-dir', dir], t.io)).toBe(0)
+    expect(await runCli(['sync', 'strategy', 'bogus', '--data-dir', dir], t.io)).toBe(1)
   })
 
   it('imports JSON Lines offline and exports signed winners', async () => {

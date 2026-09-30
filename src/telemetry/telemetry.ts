@@ -13,6 +13,7 @@ import {
   type LatencySummary,
   type LogLine,
   type OperationResultCounts,
+  type RelayRow,
   type TelemetrySnapshot,
   type WriterRow,
 } from '@dtp/telemetry-ui'
@@ -101,6 +102,7 @@ export interface SnapshotContext {
   graph: Omit<TelemetrySnapshot['graph'], 'bytes' | 'bytesPerEdge' | 'impl'>
   memory: TelemetrySnapshot['memory']
   roots: TelemetrySnapshot['roots']
+  sources: { relays: RelayRow[]; frontier: TelemetrySnapshot['sources']['frontier'] }
   config: TelemetrySnapshot['config']
   queueCap: number
   operationDeadlineMs: number
@@ -224,7 +226,7 @@ export class Telemetry {
       'memory-pressure': ctx.memory.limitBytes !== null && rss > 0.85 * ctx.memory.limitBytes,
       'ingest-backlog': ctx.queueCap > 0 && this.pendingOks() > 0.5 * ctx.queueCap,
       'guardrail-storm': allOps > 100 && truncatedOps / allOps > 0.05,
-      'source-down': false,
+      'source-down': ctx.sources.relays.some((relay) => relay.state === 'error'),
       'slow-queries': slow,
     }
     return (Object.keys(conditions) as Array<AlertRow['name']>).map((name) => {
@@ -280,10 +282,10 @@ export class Telemetry {
         writers: this.#writers(),
       },
       sources: {
-        // Relay sync is increment P2 (not built): the section exists, empty.
-        relays: [],
-        frontier: null,
+        relays: ctx.sources.relays,
+        frontier: ctx.sources.frontier,
         writers: this.#writers(),
+        // The Personal Server syncs itself; it never issues `want` demands.
         wantsOpen: 0,
       },
       queries: {
@@ -350,6 +352,9 @@ export class Telemetry {
     metric('dtp_ingest_pending_oks', 'gauge', 'Events waiting for OK')
     sample('dtp_ingest_pending_oks', {}, snap.ingest.pendingOks)
     metric('dtp_source_state', 'gauge', 'Source state (1 = connected)')
+    for (const relay of snap.sources.relays ?? []) {
+      sample('dtp_source_state', { source: relay.url, type: 'relay' }, relay.state === 'live' || relay.state === 'syncing' ? 1 : 0)
+    }
     for (const writer of snap.ingest.writers) {
       sample('dtp_source_state', { source: writer.pubkey ?? 'anonymous', type: 'writer' }, 1)
     }

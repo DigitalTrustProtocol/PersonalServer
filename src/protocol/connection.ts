@@ -44,6 +44,8 @@ export interface ConnectionDeps {
   relayHosts: ReadonlySet<string>
   info(): Record<string, unknown>
   onActiveRoot(pubkey: string): void
+  /** `root-warming` while the root's first sync runs. */
+  coverageReasons(root: string): string[]
   logger: { warn(message: string): void; debug(message: string): void }
 }
 
@@ -401,6 +403,7 @@ export class Connection {
           subscriptions: this.subscriptions,
           info: this.#deps.info,
           onActiveRoot: this.#deps.onActiveRoot,
+          coverageReasons: this.#deps.coverageReasons,
           deadlineAt: Date.now() + deadlineMs,
           isCancelled: () => entry.cancelled,
           guardrail: (reason) => telemetry.guardrail(reason),

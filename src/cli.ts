@@ -164,7 +164,7 @@ function printStatus(io: CliIo, snap: Record<string, any>): void {
   io.out(`memory rss ${(mem.rssBytes / 1048576).toFixed(1)} MiB · watchdog ${mem.watchdog} · event-loop lag p99 ${mem.impl.eventLoopLagP99Ms} ms`)
   io.out(`limits: heap edges ${mem.impl.heapEdgeLimit} · heap nodes ${mem.impl.heapNodeLimit}`)
   io.out(`connections ${snap.connections.open} · in flight ${snap.queries.inFlight} · roots ${snap.roots.active}`)
-  io.out(`relays: ${snap.sources.relays.length === 0 ? 'none syncing (relay sync is increment P2)' : snap.sources.relays.length}`)
+  io.out(`relays: ${(snap.sources.relays as Array<{ url: string; state: string }>).map((r) => `${r.url} ${r.state}`).join(', ') || 'none'} · frontier ${snap.sources.frontier?.size ?? 'n/a'}`)
   const alerts = (snap.alerts as Array<{ name: string; active: boolean }>).filter((a) => a.active)
   io.out(`alerts: ${alerts.length === 0 ? 'none' : alerts.map((a) => a.name).join(', ')}`)
 }
@@ -245,8 +245,33 @@ export async function runCli(argv: readonly string[], io: CliIo = consoleIo, env
     case 'auth':
       return manage(command, sub, rest, parsed, config(), io)
     case 'sync':
-      io.err('relay sync is not implemented yet (increment P2, see PLAN.md); events arrive via EVENT and import')
-      return 2
+      return withRepo(config(), (repo) => {
+        switch (sub) {
+          case 'start':
+          case 'stop':
+            repo.setSetting('sync.enabled', sub === 'start')
+            io.out(`sync ${sub === 'start' ? 'enabled' : 'disabled'} (a running server picks this up within 5 s)`)
+            return 0
+          case 'refresh':
+            repo.setSetting('sync.refreshAt', Math.floor(Date.now() / 1000))
+            io.out('frontier refresh requested')
+            return 0
+          case 'strategy': {
+            const value = rest[0]
+            if (value !== 'frontier-continuous' && value !== 'frontier-interval' && value !== 'global-continuous') {
+              io.err('usage: dtp-personal sync strategy frontier-continuous|frontier-interval|global-continuous')
+              return 1
+            }
+            repo.setSetting('sync.strategy', value)
+            if (value === 'frontier-interval' && rest[1]) repo.setSetting('sync.intervalMinutes', Number(rest[1]))
+            io.out(`sync.strategy = ${value}`)
+            return 0
+          }
+          default:
+            io.err('usage: dtp-personal sync start|stop|refresh|strategy <name> [minutes]')
+            return 1
+        }
+      })
     case 'export': {
       const cfg = config()
       const out = flag(parsed, 'out')
@@ -325,6 +350,7 @@ export async function runCli(argv: readonly string[], io: CliIo = consoleIo, env
           'dtp-personal start | status [--json] | dashboard',
           'dtp-personal roots add|remove|list <npub|hex>',
           'dtp-personal relays add|remove|list <wss://…>',
+          'dtp-personal sync start|stop|refresh | sync strategy frontier-continuous|frontier-interval <minutes>|global-continuous',
           'dtp-personal auth reads|writes open|members',
           'dtp-personal members add|remove|list <npub|hex> [--role read|write|admin]',
           'dtp-personal export [--out events.jsonl] | import <file>',
@@ -357,7 +383,6 @@ function manage(command: string, sub: string | undefined, rest: string[], parsed
         const relays = repo.setting<string[]>('relays', [])
         if (sub === 'list') {
           for (const relay of relays) io.out(relay)
-          io.err('note: relay sync is increment P2 and not built yet; relays are stored for it')
           return 0
         }
         if (!target || (sub !== 'add' && sub !== 'remove')) break

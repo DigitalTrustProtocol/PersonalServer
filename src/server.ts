@@ -36,6 +36,7 @@ import { IMPLEMENTED_OPS, UNSUPPORTED_OPS } from './protocol/ops.js'
 import { PushHub } from './protocol/push.js'
 import { openDatabase } from './storage/database.js'
 import { Repository } from './storage/repository.js'
+import { SyncService } from './sync/sync-service.js'
 import { Telemetry, type SnapshotContext } from './telemetry/telemetry.js'
 import { VERSION } from './version.js'
 
@@ -54,6 +55,8 @@ export interface StartOptions {
   logger?: Logger
   /** Print logs to the console (default true). */
   console?: boolean
+  /** Run relay sync (default true; it idles until relays and roots are configured). */
+  sync?: boolean
 }
 
 function isPrivateAddress(address: string | undefined): boolean {
@@ -94,6 +97,8 @@ export class PersonalServer {
   readonly logger: Logger
   readonly guardrails: Guardrails
   readonly memory: MemoryGuardrails
+  readonly sync: SyncService
+  readonly #runSync: boolean
   readonly #http: Server
   readonly #wss: WebSocketServer
   readonly #admin: AdminServer
@@ -104,6 +109,7 @@ export class PersonalServer {
   readonly #lag = monitorEventLoopDelay({ resolution: 20 })
   #timers: NodeJS.Timeout[] = []
   #ready = false
+  #coveragePushes = 0
   #readySince = Date.now()
   #port = 0
   #adminPort = 0
@@ -133,6 +139,23 @@ export class PersonalServer {
     this.ingest = new IngestPipeline(this.repo, this.graph, this.telemetry, { maxHeapEdges: this.memory.maxHeapEdges })
     this.#push = new PushHub(() => this.#connections)
     this.graph.onChange((change) => this.#push.onChange(change))
+    this.#runSync = options.sync !== false
+    this.sync = new SyncService({
+      repo: this.repo,
+      graph: this.graph,
+      pipeline: this.ingest,
+      telemetry: this.telemetry,
+      logger: this.logger,
+      maxHeapEdges: this.memory.maxHeapEdges,
+      onRootWarm: (root) => {
+        this.#coveragePushes += 1
+        for (const connection of this.#connections) {
+          if (connection.subscriptions.has('coverage')) {
+            connection.send(['DTP-PUSH', 'coverage', { rootPubkey: root, coverage: 'complete', reasons: [] }])
+          }
+        }
+      },
+    })
     this.#http = createServer((req, res) => void this.#onHttp(req, res))
     this.#wss = new WebSocketServer({
       noServer: true,
@@ -212,6 +235,7 @@ export class PersonalServer {
       setInterval(() => this.telemetry.sample({ rssBytes: process.memoryUsage.rss(), edges: this.graph.liveEdges() }), HISTORY_INTERVAL_MS),
     )
     for (const timer of this.#timers) timer.unref()
+    if (this.#runSync) this.sync.start()
     this.#ready = true
     this.#readySince = Date.now()
     this.logger.info(`listening on ${this.url} (admin ${this.adminUrl})`)
@@ -221,6 +245,7 @@ export class PersonalServer {
     this.#ready = false
     for (const timer of this.#timers) clearInterval(timer)
     this.#timers = []
+    await this.sync.stop()
     this.#push.stop()
     this.#lag.disable()
     for (const connection of this.#connections) connection.close(1001, 'server shutting down')
@@ -333,7 +358,11 @@ export class PersonalServer {
           access: () => this.access(),
           relayHosts: this.#hosts,
           info: () => this.info(),
-          onActiveRoot: (pubkey) => this.repo.touchActiveRoot(pubkey, dayNumber()),
+          onActiveRoot: (pubkey) => {
+            this.repo.touchActiveRoot(pubkey, dayNumber())
+            this.sync.kick()
+          },
+          coverageReasons: (root) => (this.sync.warming(root) ? ['root-warming'] : []),
           logger: this.logger,
         },
         origin,
@@ -451,7 +480,8 @@ export class PersonalServer {
         deleteFloors: stats.deleteFloors,
       },
       memory: this.#memoryStatus(),
-      roots: { active: roots.length, warming: 0, coveragePushes: 0 },
+      roots: { active: roots.length, warming: this.sync.warmingCount(), coveragePushes: this.#coveragePushes },
+      sources: { relays: this.sync.pool.status(), frontier: this.sync.frontier() },
       config: {
         effective: {
           listen: this.config.listen,

@@ -14,6 +14,7 @@ function ctx(overrides: Partial<OpContext> = {}): OpContext {
     subscriptions: new Set(),
     info: () => ({}),
     onActiveRoot: () => undefined,
+    coverageReasons: () => [],
     deadlineAt: Date.now() + 500,
     isCancelled: () => false,
     guardrail: () => undefined,
