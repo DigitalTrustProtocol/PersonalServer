@@ -249,7 +249,7 @@ export class Connection {
     }
     const author = (input as { pubkey?: unknown } | null)?.pubkey
     if (typeof author === 'string' && this.#deps.membership.isBanned(author)) {
-      this.#send(['OK', id, false, 'blocked: pubkey is banned'])
+      this.#send(['OK', id, false, 'restricted: pubkey is banned'])
       return
     }
     this.info.role = this.info.role === 'admin' ? 'admin' : 'writer'

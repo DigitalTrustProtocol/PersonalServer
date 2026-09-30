@@ -160,6 +160,10 @@ describe('NIP-86 management with NIP-98', () => {
     expect(h.server.membership.rolesOf(member.pk).has('admin')).toBe(true)
     expect((await call(admin, 'banpubkey', [member.pk])).body.result).toBe(true)
     expect(h.server.membership.isBanned(member.pk)).toBe(true)
+    const writer = await TestClient.connect(h.server.url)
+    const banned = await trustEvent(member, { subject: { type: 'p', value: actor().pk } })
+    expect(await writer.publish(banned)).toMatchObject({ ok: false, message: expect.stringMatching(/^restricted:/) })
+    writer.close()
     const unsigned = await rawHttp(h.server.port, {
       method: 'POST',
       body: '{}',
