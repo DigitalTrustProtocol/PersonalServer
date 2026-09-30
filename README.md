@@ -6,7 +6,7 @@ from Nostr relays, accepts the user's own signed events from the Attention
 extension, and answers the resolver protocol over a WebSocket on the local
 machine or network — for Attention and any other local app.
 
-Status: **design** (specs only, no code yet) · 2026-09-30
+Status: **server built** (resolver API, relay sync, auth, telemetry) · 2026-10-01
 
 ## Why
 
