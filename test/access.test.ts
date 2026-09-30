@@ -43,10 +43,10 @@ describe('HTTP: NIP-11 and health', () => {
       self: h.server.key.pubkey,
       supported_nips: [1, 9, 11, 42, 43, 86],
       limitation: { auth_required: false, restricted_writes: false, max_message_length: 4 * 1024 * 1024 },
-      dtp: { api: 'v1', model: 'dtp-wot/1', corpus: 'dtp-wot-corpus/1', scopeProfile: 'x.com', gaps: ['G8', 'G10', 'G12'] },
+      dtp: { api: 'v1', model: 'dtp-wot/1', corpus: 'dtp-wot-corpus/1', scopeProfile: 'x.com', gaps: ['G5'] },
     })
-    expect(doc.dtp.capabilities).toContain('lookup.batch')
-    expect(doc.dtp.unsupported['graph.field']).toMatch(/G12/)
+    expect(doc.dtp.capabilities).toEqual(expect.arrayContaining(['lookup.batch', 'graph.field']))
+    expect(doc.dtp.unsupported).toBeUndefined()
     expect(doc.dtp.limits).toMatchObject({ operationDeadline: 500, maxBatchItems: 200, maxLookupKeys: 50, maxInFlight: 32 })
   })
 

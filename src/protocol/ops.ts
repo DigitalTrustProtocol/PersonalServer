@@ -2,10 +2,10 @@
  * DTP operations (resolver-api.md § Operations). Each handler returns one
  * payload built by GraphManager (→ @dtp/trust-query → the one walk).
  *
- * Guardrails that need the walk itself (time / node / record budgets,
- * `completeDepth`) are gap G10 and `graph.field` is gap G12 — both blocked on
- * decision D3; `graph.field` answers `unsupported`. Deadlines are checked
- * between operations (batch items, lookup batch entries).
+ * Walk budgets (`maxReachedNodes`, `maxWalkRecords`, and the operation
+ * deadline) run inside the walk and report `truncated` + `completeDepth`;
+ * deadlines are also checked between operations (batch items, lookup batch
+ * entries).
  */
 
 import {
@@ -16,18 +16,19 @@ import {
   type LookupLimits,
   type LookupParams,
   type NeighborhoodParams,
+  type WalkBudgets,
   type WireRatingResult,
   type WireTrustResult,
 } from '@dtp/trust-query'
 import type { Guardrails } from '../config.js'
 import type { GraphManager } from '../graph/graph-manager.js'
 import { OpError, invalid } from './errors.js'
-import { parseDefaults, resolveQuery, type ResolvedQuery, type SessionDefaults } from './session.js'
+import { parseDefaults, resolveField, resolveQuery, type ResolvedQuery, type SessionDefaults } from './session.js'
 
 export const PUSH_TOPICS = ['graph', 'coverage', 'want'] as const
 export type PushTopic = (typeof PUSH_TOPICS)[number]
 
-/** Operations this server implements; `graph.field` is listed separately as unsupported. */
+/** Operations this server implements. */
 export const IMPLEMENTED_OPS = [
   'info',
   'session.update',
@@ -41,15 +42,14 @@ export const IMPLEMENTED_OPS = [
   'lookup.batch',
   'graph.neighborhood',
   'graph.frontier',
+  'graph.field',
   'identity.claims',
   'subscribe',
   'unsubscribe',
 ] as const
 
-export const UNSUPPORTED_OPS: Readonly<Record<string, string>> = Object.freeze({
-  'graph.field':
-    'graph.field needs the walk level structure from @dtp/trust-graph (gap G12, blocked on decision D3)',
-})
+/** Operations named in `dtp.unsupported` with their reason; none today. */
+export const UNSUPPORTED_OPS: Readonly<Record<string, string>> = Object.freeze({})
 
 export interface OpContext {
   graph: GraphManager
@@ -79,19 +79,24 @@ function lookupLimits(g: Guardrails): LookupLimits {
   return { maxKeys: g.maxLookupKeys, maxPage: g.maxLookupPage, maxRecords: g.maxLookupRecords }
 }
 
-/**
- * `root-warming` while the root's first sync runs; `binding-unsupported`
- * for X accounts, which servers cannot bind until gap G8 lands (D3).
- */
+/** `root-warming` while the root's first sync runs. */
 function coverageFor<T extends WireTrustResult | WireRatingResult>(ctx: OpContext, result: T, resolved: ResolvedQuery): T {
-  const reasons = [...ctx.coverageReasons(resolved.query.rootPubkey)]
-  if (resolved.query.subject.value.startsWith('user:id:')) reasons.push('binding-unsupported')
-  if (reasons.length > 0) return { ...result, coverage: 'partial', coverageReasons: reasons }
+  const reasons = ctx.coverageReasons(resolved.query.rootPubkey)
+  if (reasons.length > 0) return { ...result, coverage: 'partial', coverageReasons: [...reasons] }
   return { ...result, coverage: 'complete' }
 }
 
-function runTrust(ctx: OpContext, resolved: ResolvedQuery): WireTrustResult {
-  const result = ctx.graph.trust(resolved.query)
+/** Walk budgets from the guardrails; the deadline is the earlier of the operation's and the request's `deadlineMs`. */
+function walkBudgets(ctx: OpContext, deadlineAt: number, deadlineMs?: number): WalkBudgets {
+  return {
+    maxReachedNodes: ctx.guardrails.maxReachedNodes,
+    maxWalkRecords: ctx.guardrails.maxWalkRecords,
+    deadline: Math.min(deadlineAt, deadlineMs !== undefined ? Date.now() + deadlineMs : Number.POSITIVE_INFINITY),
+  }
+}
+
+function runTrust(ctx: OpContext, resolved: ResolvedQuery, deadlineAt = ctx.deadlineAt): WireTrustResult {
+  const result = ctx.graph.trust({ ...resolved.query, budgets: walkBudgets(ctx, deadlineAt, resolved.deadlineMs) })
   const limited = limitTrustResult(result, {
     statementLimit: resolved.statementLimit,
     maxPathNodes: ctx.guardrails.maxPathNodes,
@@ -100,8 +105,8 @@ function runTrust(ctx: OpContext, resolved: ResolvedQuery): WireTrustResult {
   return coverageFor(ctx, limited, resolved)
 }
 
-function runRating(ctx: OpContext, resolved: ResolvedQuery): WireRatingResult {
-  const result = ctx.graph.rating(resolved.query)
+function runRating(ctx: OpContext, resolved: ResolvedQuery, deadlineAt = ctx.deadlineAt): WireRatingResult {
+  const result = ctx.graph.rating({ ...resolved.query, budgets: walkBudgets(ctx, deadlineAt, resolved.deadlineMs) })
   const limited = limitRatingResult(result, {
     statementLimit: resolved.statementLimit,
     maxPathNodes: ctx.guardrails.maxPathNodes,
@@ -116,7 +121,7 @@ async function runBatch<T>(
   ctx: OpContext,
   params: Record<string, unknown>,
   kind: 'trust' | 'rating',
-  run: (resolved: ResolvedQuery) => T,
+  run: (resolved: ResolvedQuery, deadlineAt: number) => T,
 ): Promise<{ graphVersion: number; results: Record<string, T>; errors?: Record<string, string> }> {
   const items = params.items
   if (!Array.isArray(items)) throw invalid('items must be an array')
@@ -150,7 +155,7 @@ async function runBatch<T>(
     }
     try {
       const resolved = resolveQuery({ ...shared, ...item }, item.subject, kind, ctx.session, ctx.guardrails)
-      results[key] = run(resolved)
+      results[key] = run(resolved, batchDeadline)
     } catch (error) {
       if (error instanceof OpError && error.code !== 'invalid' && error.code !== 'unsupported') throw error
       errors[key] = error instanceof OpError ? `${error.code}: ${error.message}` : 'error: internal error'
@@ -242,9 +247,9 @@ export async function runOperation(ctx: OpContext, op: string, rawParams: unknow
     case 'rating.query':
       return runRating(ctx, resolveQuery(params, params.subject, 'rating', ctx.session, ctx.guardrails))
     case 'trust.batch':
-      return runBatch(ctx, params, 'trust', (resolved) => runTrust(ctx, resolved))
+      return runBatch(ctx, params, 'trust', (resolved, deadlineAt) => runTrust(ctx, resolved, deadlineAt))
     case 'rating.batch':
-      return runBatch(ctx, params, 'rating', (resolved) => runRating(ctx, resolved))
+      return runBatch(ctx, params, 'rating', (resolved, deadlineAt) => runRating(ctx, resolved, deadlineAt))
     case 'lookup.incoming':
       return lookup(ctx, 'incoming', params)
     case 'lookup.outgoing':
@@ -291,6 +296,15 @@ export async function runOperation(ctx: OpContext, op: string, rawParams: unknow
         maxTotalAuthors: intParam('maxTotalAuthors', params.maxTotalAuthors, 5_000, 1_000_000),
       })
       return { graphVersion: ctx.graph.graphVersion, ...result }
+    }
+    case 'graph.field': {
+      const deadlineMs = typeof params.deadlineMs === 'number' && params.deadlineMs > 0 ? params.deadlineMs : undefined
+      const result = ctx.graph.field({
+        ...resolveField(params, ctx.session, ctx.guardrails),
+        budgets: walkBudgets(ctx, ctx.deadlineAt, deadlineMs),
+      })
+      for (const reason of result.truncatedReasons ?? []) ctx.guardrail(reason)
+      return result
     }
     case 'identity.claims': {
       const twitterId = params.twitterId

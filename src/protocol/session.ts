@@ -4,7 +4,7 @@
  * lookups never use a root.
  */
 
-import type { RatingQuery, TrustQuery, TrustSubject } from '@dtp/trust-query'
+import type { FieldQuery, RatingQuery, TrustQuery, TrustSubject } from '@dtp/trust-query'
 import { parseWireSubject } from '@dtp/trust-query'
 import type { Guardrails } from '../config.js'
 import { OpError, invalid } from './errors.js'
@@ -85,6 +85,41 @@ export function parseDefaults(raw: unknown): SessionDefaults {
   return out
 }
 
+function checkHopContext(params: Record<string, unknown>): void {
+  const hopContext = params.hopContext ?? HOP_CONTEXT
+  if (hopContext !== HOP_CONTEXT) {
+    throw new OpError('unsupported', 'hopContext other than identity is not supported by this server')
+  }
+}
+
+function nowOf(value: unknown): number | undefined {
+  if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) throw invalid('now must be a number')
+  return value as number | undefined
+}
+
+/** `graph.field` params `{ rootPubkey?, hopContext?, threshold?, maxDepth?, bindingMode? }` with session defaults. */
+export function resolveField(params: Record<string, unknown>, session: SessionDefaults, guardrails: Guardrails): FieldQuery {
+  const rootPubkey = pubkeyOf('rootPubkey', params.rootPubkey) ?? session.rootPubkey
+  if (!rootPubkey) throw invalid('rootPubkey is required (set it here or with session.update)')
+  checkHopContext(params)
+  const now = nowOf(params.now)
+  const threshold =
+    percent('threshold', params.threshold) ??
+    percent('followTrustThreshold', params.followTrustThreshold) ??
+    session.followTrustThreshold
+  const boundsDepth = (params.bounds as { maxDepth?: unknown } | undefined)?.maxDepth
+  const requestedDepth =
+    maxDepthOf(params.maxDepth) ?? maxDepthOf(boundsDepth) ?? session.bounds?.maxDepth ?? 4
+  const bindingMode = bindingModeOf(params.bindingMode) ?? session.bindingMode ?? 'lenient'
+  return {
+    rootPubkey,
+    maxDepth: Math.min(requestedDepth, guardrails.maxDepth),
+    bindingMode,
+    ...(threshold !== undefined ? { followTrustThreshold: threshold } : {}),
+    ...(now !== undefined ? { now } : {}),
+  }
+}
+
 export interface ResolvedQuery {
   query: TrustQuery & RatingQuery
   statementLimit: number
@@ -106,12 +141,8 @@ export function resolveQuery(
   if (!rootPubkey) throw invalid('rootPubkey is required (set it here or with session.update)')
   const context = params.context ?? (kind === 'trust' ? DEFAULT_TRUST_CONTEXT : DEFAULT_RATING_CONTEXT)
   if (typeof context !== 'string' || context.length > 128) throw invalid('context must be a string of at most 128 bytes')
-  const hopContext = params.hopContext ?? HOP_CONTEXT
-  if (hopContext !== HOP_CONTEXT) {
-    throw new OpError('unsupported', 'hopContext other than identity is not supported by this server')
-  }
-  const now = params.now
-  if (now !== undefined && (typeof now !== 'number' || !Number.isFinite(now))) throw invalid('now must be a number')
+  checkHopContext(params)
+  const now = nowOf(params.now)
   const format = params.format ?? 'default'
   if (format !== 'default' && format !== 'path') throw invalid('format must be default or path')
   const boundsRaw = params.bounds
@@ -143,6 +174,7 @@ export function resolveQuery(
       ...(now !== undefined ? { now } : {}),
       bounds: { maxDepth },
       format,
+      bindingMode,
       ...(followTrustThreshold !== undefined ? { followTrustThreshold } : {}),
       ...(followTrustRed !== undefined ? { followTrustRed } : {}),
       ...(labels ? { labels } : {}),

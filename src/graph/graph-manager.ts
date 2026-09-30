@@ -11,6 +11,7 @@ import {
   DEFAULT_RESOLVE_BOUNDS,
   SlotFloors,
   applyWithFloors,
+  executeFieldQuery,
   executeRatingQuery,
   executeTrustQuery,
   lookupCounts,
@@ -18,6 +19,8 @@ import {
   neighborhoodLookup,
   positiveAuthorFrontier,
   slotWinner,
+  type FieldQuery,
+  type FieldQueryResult,
   type FloorApplyResult,
   type FrontierLimits,
   type FrontierResult,
@@ -35,21 +38,6 @@ import {
   type TrustQueryResult,
 } from '@dtp/trust-query'
 import type { Repository, StoredClaim } from '../storage/repository.js'
-
-/**
- * 10011 claims attached to the Graph instance (the extension attaches its
- * chrome maps the same way): twitterId → pubkey → claim event id.
- */
-const claimsByGraph = new WeakMap<Graph, Map<string, Map<string, string>>>()
-
-function graphClaims(graph: Graph): Map<string, Map<string, string>> {
-  let claims = claimsByGraph.get(graph)
-  if (!claims) {
-    claims = new Map()
-    claimsByGraph.set(graph, claims)
-  }
-  return claims
-}
 
 export interface GraphChange {
   graphVersion: number
@@ -78,7 +66,6 @@ export class GraphManager {
   load(repository: Repository): { records: number; claims: number } {
     this.graph.clear()
     this.floors.clear()
-    graphClaims(this.graph).clear()
     this.#edgeCounts = { '32009': 0, '32014': 0 }
     this.#hinted = 0
     const claims = repository.claims()
@@ -151,32 +138,26 @@ export class GraphManager {
     this.floors.raise(addressKey, floor)
   }
 
+  /** One winning 10011 per pubkey, held on the Graph where the walk reads it (strict binds). */
   putClaim(claim: StoredClaim): void {
-    const claims = graphClaims(this.graph)
-    // One winning 10011 per pubkey: drop whatever it claimed before.
     this.dropClaims(claim.pubkey, false)
-    let byPubkey = claims.get(claim.twitterId)
-    if (!byPubkey) {
-      byPubkey = new Map()
-      claims.set(claim.twitterId, byPubkey)
-    }
-    byPubkey.set(claim.pubkey, claim.eventId)
+    this.graph.setIdentityClaims(claim.pubkey, [claim.twitterId], claim.eventId)
     this.#pending.push(`i:user:id:${claim.twitterId}`)
   }
 
   dropClaims(pubkey: string, touch = true): void {
-    for (const [twitterId, byPubkey] of graphClaims(this.graph)) {
-      if (byPubkey.delete(pubkey) && touch) this.#pending.push(`i:user:id:${twitterId}`)
-      if (byPubkey.size === 0) graphClaims(this.graph).delete(twitterId)
-    }
+    const claim = this.graph.identityClaims.get(pubkey.toLowerCase())
+    if (!claim) return
+    this.graph.removeIdentityClaims(pubkey)
+    if (touch) for (const twitterId of claim.twitterIds) this.#pending.push(`i:user:id:${twitterId}`)
   }
 
   claimsFor(twitterId: string): Array<{ pubkey: string; eventId: string }> {
-    const byPubkey = graphClaims(this.graph).get(twitterId)
-    if (!byPubkey) return []
-    return [...byPubkey]
-      .map(([pubkey, eventId]) => ({ pubkey, eventId }))
-      .sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0))
+    const out: Array<{ pubkey: string; eventId: string }> = []
+    for (const [pubkey, claim] of this.graph.identityClaims) {
+      if (claim.twitterIds.has(twitterId)) out.push({ pubkey, eventId: claim.eventId ?? '' })
+    }
+    return out.sort((a, b) => (a.pubkey < b.pubkey ? -1 : a.pubkey > b.pubkey ? 1 : 0))
   }
 
   /** Live (non-Delete) heap edges, O(1). */
@@ -186,7 +167,7 @@ export class GraphManager {
 
   stats(): GraphStats {
     let claims = 0
-    for (const byPubkey of graphClaims(this.graph).values()) claims += byPubkey.size
+    for (const claim of this.graph.identityClaims.values()) claims += claim.twitterIds.size
     let nodes = 0
     for (const node of this.graph.nodesList) if (node) nodes += 1
     return {
@@ -227,5 +208,9 @@ export class GraphManager {
 
   frontier(roots: readonly string[], limits: FrontierLimits, now?: number): FrontierResult {
     return positiveAuthorFrontier(this.graph, roots, limits, now)
+  }
+
+  field(query: FieldQuery): FieldQueryResult {
+    return executeFieldQuery(this.graph, indexResolver, query, this.graphVersion)
   }
 }

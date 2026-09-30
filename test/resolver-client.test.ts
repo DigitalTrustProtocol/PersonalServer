@@ -36,7 +36,7 @@ describe('@dtp/resolver-client against the Personal Server', () => {
     const info = await client.info()
     expect(info.instanceId).toBe(h.server.instanceId)
     expect((await client.req([{ ids: [second.id] }])).map((e) => e.id)).toEqual([second.id])
-    await expect(client.graphField({ rootPubkey: root.pk })).rejects.toMatchObject({ code: 'unsupported' })
+    expect(await client.graphField({ rootPubkey: root.pk })).toMatchObject({ completeDepth: 3, levels: [[root.pk], [alice.pk], [bob.pk], []] })
     await new Promise((resolve) => setTimeout(resolve, 400))
     expect(pushes.length).toBeGreaterThan(0)
     await unsubscribe()

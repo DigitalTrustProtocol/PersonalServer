@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { finalizeEvent } from 'nostr-tools'
+import { finalizeEvent, nip19 } from 'nostr-tools'
 import { NOW, TestClient, actor, claimEvent, ratingEvent, startServer, trustEvent, type Harness } from './helpers.js'
 
 const root = actor()
@@ -88,9 +88,15 @@ describe('resolver operations', () => {
     expect(typeof result.graphVersion).toBe('number')
   })
 
-  it('marks user:id results partial until binding lands (gap G8)', async () => {
+  it('answers user:id results with binding provenance, complete coverage', async () => {
     const result = await client.dtp('trust.query', { rootPubkey: root.pk, subject: X, format: 'path' })
-    expect(result).toMatchObject({ connected: true, degree: 3, coverage: 'partial', coverageReasons: ['binding-unsupported'] })
+    expect(result).toMatchObject({
+      connected: true,
+      degree: 3,
+      coverage: 'complete',
+      binding: { mode: 'lenient', source: 'none', confirmed: false },
+    })
+    expect(result.coverageReasons).toBeUndefined()
     expect(result.pathView.nodes.every((n: { subject?: unknown }) => n.subject)).toBe(true)
   })
 
@@ -187,8 +193,13 @@ describe('resolver operations', () => {
     await expect(client.dtp('identity.claims', { twitterId: 'abc' })).rejects.toMatchObject({ code: 'invalid' })
   })
 
-  it('answers graph.field with unsupported (gap G12) and unknown ops with invalid', async () => {
-    await expect(client.dtp('graph.field', { rootPubkey: root.pk })).rejects.toMatchObject({ code: 'unsupported' })
+  it('answers graph.field with the level structure, unknown ops with invalid', async () => {
+    const field = await client.dtp('graph.field', { rootPubkey: root.pk })
+    expect(field).toMatchObject({ completeDepth: 3, levels: [[root.pk], [alice.pk], [bob.pk], []], binds: [] })
+    expect(typeof field.graphVersion).toBe('number')
+    await expect(client.dtp('graph.field', { rootPubkey: root.pk, hopContext: 'security' })).rejects.toMatchObject({
+      code: 'unsupported',
+    })
     await expect(client.dtp('no.such.op')).rejects.toMatchObject({ code: 'invalid' })
     await expect(
       client.dtp('trust.query', { rootPubkey: root.pk, subject: POST, hopContext: 'security' }),
@@ -197,9 +208,78 @@ describe('resolver operations', () => {
 
   it('info returns the dtp object with graphVersion', async () => {
     const info = await client.dtp('info')
-    expect(info).toMatchObject({ api: 'v1', model: 'dtp-wot/1', instanceId: h.server.instanceId, gaps: ['G8', 'G10', 'G12'] })
-    expect(info.capabilities).not.toContain('graph.field')
+    expect(info).toMatchObject({ api: 'v1', model: 'dtp-wot/1', instanceId: h.server.instanceId, gaps: ['G5'] })
+    expect(info.capabilities).toContain('graph.field')
+    expect(info.unsupported).toBeUndefined()
     expect(info.graphVersion).toBeGreaterThan(1)
+  })
+})
+
+describe('identity binding and walk budgets', () => {
+  // Root trusts Alice; Alice's x.com statement about X hints Dave (a witness
+  // and a hop); Dave trusts Erin. Lenient binds X = Dave; strict needs Dave's 10011.
+  const bindRoot = actor()
+  const witness = actor()
+  const dave = actor()
+  const erin = actor()
+  const BOUND = { type: 'i' as const, value: 'user:id:777' }
+  let b: Harness
+  let c: TestClient
+
+  beforeAll(async () => {
+    b = await startServer()
+    c = await TestClient.connect(b.server.url)
+    for (const event of [
+      await trustEvent(bindRoot, { subject: { type: 'p', value: witness.pk } }),
+      await trustEvent(witness, {
+        subject: BOUND,
+        scopes: ['x.com'],
+        subjectHints: [{ kind: 'npub', npub: nip19.npubEncode(dave.pk) }],
+      }),
+      await trustEvent(dave, { subject: { type: 'p', value: erin.pk } }),
+    ]) {
+      expect((await c.publish(event)).ok).toBe(true)
+    }
+  })
+
+  afterAll(async () => {
+    c.close()
+    await b.close()
+  })
+
+  it('binds through a witness in lenient mode (the default) and not in strict mode without a claim', async () => {
+    const lenient = await c.dtp('trust.query', { rootPubkey: bindRoot.pk, subject: { type: 'p', value: erin.pk } })
+    expect(lenient).toMatchObject({ connected: true, degree: 3 })
+    const strict = await c.dtp('trust.query', {
+      rootPubkey: bindRoot.pk,
+      subject: { type: 'p', value: erin.pk },
+      bindingMode: 'strict',
+    })
+    expect(strict.connected).toBe(false)
+    const provenance = await c.dtp('trust.query', { rootPubkey: bindRoot.pk, subject: BOUND })
+    expect(provenance.binding).toMatchObject({ mode: 'lenient', pubkey: dave.pk, source: 'witness', witnessDegree: 2, confirmed: false })
+  })
+
+  it('binds in strict mode once the pubkey claims the X account', async () => {
+    expect((await c.publish(claimEvent(dave, '777'))).ok).toBe(true)
+    const strict = await c.dtp('trust.query', {
+      rootPubkey: bindRoot.pk,
+      subject: { type: 'p', value: erin.pk },
+      bindingMode: 'strict',
+    })
+    expect(strict).toMatchObject({ connected: true, degree: 3 })
+    const field = await c.dtp('graph.field', { rootPubkey: bindRoot.pk, bindingMode: 'strict' })
+    expect(field.binds).toEqual([{ subject: 'i:user:id:777', pubkey: dave.pk, source: 'witness', level: 1, witnessEventId: expect.any(String) }])
+  })
+
+  it('stops a walk on the node budget and reports completeDepth', async () => {
+    Object.assign(b.server.guardrails, { maxReachedNodes: 2 })
+    try {
+      const result = await c.dtp('trust.query', { rootPubkey: bindRoot.pk, subject: { type: 'p', value: erin.pk } })
+      expect(result).toMatchObject({ connected: false, truncated: true, truncatedReasons: ['nodeBudget'], completeDepth: 1 })
+    } finally {
+      Object.assign(b.server.guardrails, { maxReachedNodes: 5_000_000 })
+    }
   })
 })
 

@@ -23,12 +23,22 @@ describe('session suite against the Personal Server', () => {
             const value = session.config[key]
             if (value === 'open' || value === 'members') server.repo.setSetting(key, value)
           }
+          // `limits.<guardrail>` entries (for example limits.maxReachedNodes) set the walk budgets.
+          for (const [key, value] of Object.entries(session.config)) {
+            const name = key.startsWith('limits.') ? key.slice('limits.'.length) : undefined
+            if (name === undefined) continue
+            if (!(name in server.guardrails) || typeof value !== 'number') throw new Error(`unknown session limit ${key}`)
+            ;(server.guardrails as unknown as Record<string, number>)[name] = value
+          }
         },
       })
       try {
         const outcomes = await runSession(h.server.url, session)
         const failures = outcomes.filter((o) => o.errors.length > 0)
         expect(failures.map((o) => `step ${o.step}${o.note ? ` (${o.note})` : ''}: ${o.errors.join('; ')}`)).toEqual([])
+        // This server implements every operation and closes the gaps the sessions gate on.
+        expect(outcomes.filter((o) => o.skipped || o.otherwise).map((o) => o.step)).toEqual([])
+        expect(outcomes).toHaveLength(session.steps.length)
       } finally {
         await h.close()
       }

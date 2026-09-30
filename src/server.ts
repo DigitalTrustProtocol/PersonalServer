@@ -44,8 +44,12 @@ import { VERSION } from './version.js'
 export const API_VERSION = 'v1'
 export const MODEL_VERSION = 'dtp-wot/1'
 export const CORPUS_VERSION = 'dtp-wot-corpus/1'
-/** Gaps that keep this TypeScript server from the full shared API (decision D3). */
-export const OPEN_GAPS = ['G8', 'G10', 'G12'] as const
+/**
+ * Model gaps still open in the @dtp/trust-graph walk this server runs
+ * (TrustGraph specs/conformance.md § Known gaps). G5: `web:` keys are
+ * lowercased whole.
+ */
+export const OPEN_GAPS = ['G5'] as const
 
 const PING_INTERVAL_MS = 20_000
 const PONG_TIMEOUT_MS = 60_000
@@ -400,8 +404,8 @@ export class PersonalServer {
       instanceId: this.instanceId,
       scopeProfile: 'x.com',
       capabilities: [...IMPLEMENTED_OPS],
-      unsupported: { ...UNSUPPORTED_OPS },
-      gaps: [...OPEN_GAPS],
+      ...(Object.keys(UNSUPPORTED_OPS).length > 0 ? { unsupported: { ...UNSUPPORTED_OPS } } : {}),
+      ...(OPEN_GAPS.length > 0 ? { gaps: [...OPEN_GAPS] } : {}),
       limits: this.limits(),
     }
   }
